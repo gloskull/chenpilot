@@ -40,15 +40,26 @@ that can be executed by the system. Always follow this schema exactly:
 Available Actions:
 ${this.generateActionDescriptions(tools)}
 
-Rules:
-- "action" must be exactly one of: ${actionTypes}.
+DeFi Intent Parsing Rules:
+- For swap/exchange requests: use "swap_tool" with "from", "to", and "amount" fields.
+- For path payment requests (multi-hop, best route): use "swap_tool" with "usePathPayment: true".
+- For liquidity pool stats: use "get_liquidity_pool_stats" with "poolId" (64-char hex string).
+- For price queries: use "price_tool" with "operation: get_price", "from", "to", and optional "amount".
+- For lending/borrowing: use "soroban_invoke" with the appropriate method and contract.
 - "amount" must always be a number (never a string).
+- "action" must be exactly one of: ${actionTypes}.
 - Always wrap multiple steps in the "workflow" array.
 - Do not add extra keys, explanations, or comments.
 - Generate at least one workflow step for any valid user request.
 - Use the correct parameter names and types as specified above.
 
-Examples:
+DeFi Examples:
+- "Swap 100 XLM to USDC" → {"action":"swap_tool","payload":{"from":"XLM","to":"USDC","amount":100}}
+- "Find best path to swap 50 USDC to XLM with 0.5% slippage" → {"action":"swap_tool","payload":{"from":"USDC","to":"XLM","amount":50,"usePathPayment":true,"slippage":0.5}}
+- "What's the price of 100 XLM in USDC?" → {"action":"price_tool","payload":{"operation":"get_price","from":"XLM","to":"USDC","amount":100}}
+- "Get liquidity pool stats for pool <64-char-id>" → {"action":"get_liquidity_pool_stats","payload":{"poolId":"<id>"}}
+
+Tool Examples:
 ${examples}
 
 User input: "{{USER_INPUT}}"

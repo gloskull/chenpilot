@@ -2,6 +2,10 @@ import { WorkflowPlan, WorkflowStep } from "../types";
 
 export const SOROBAN_INVOKE_ACTION = "soroban_invoke";
 
+// Path payment keywords — handled before LLM to reduce latency and cost
+const PATH_PAYMENT_KEYWORDS = ["path payment", "path pay", "multi-hop", "route payment", "find path"];
+const LIQUIDITY_POOL_KEYWORDS = ["pool stats", "pool id", "liquidity pool", "amm pool", "pool apr"];
+
 const SOROBAN_KEYWORDS = [
   "soroban",
   "contract",
@@ -20,6 +24,43 @@ const METHOD_KEYWORDS = ["stake", "unstake", "lend", "borrow"];
 
 export function parseSorobanIntent(input: string): WorkflowPlan | null {
   const text = input.toLowerCase();
+
+  // Fast-path: liquidity pool stats by pool ID
+  if (LIQUIDITY_POOL_KEYWORDS.some((k) => text.includes(k))) {
+    const poolIdMatch = input.match(/\b([0-9a-f]{64})\b/i);
+    if (poolIdMatch) {
+      return {
+        workflow: [
+          {
+            action: "get_liquidity_pool_stats",
+            payload: { poolId: poolIdMatch[1].toLowerCase() },
+          },
+        ],
+      };
+    }
+  }
+
+  // Fast-path: path payment intent — delegate to swap_tool with path flag
+  if (PATH_PAYMENT_KEYWORDS.some((k) => text.includes(k))) {
+    const amountMatch = input.match(/(\d+(?:\.\d+)?)/);
+    const fromMatch = input.match(/\b(XLM|USDC|USDT)\b/i);
+    const toMatch = input.match(/\b(XLM|USDC|USDT)\b/gi);
+    const slippageMatch = input.match(/(\d+(?:\.\d+)?)\s*%\s*slippage/i);
+
+    if (fromMatch && toMatch && toMatch.length >= 2) {
+      const payload: Record<string, unknown> = {
+        from: fromMatch[1].toUpperCase(),
+        to: toMatch[toMatch.length - 1].toUpperCase(),
+        amount: amountMatch ? parseFloat(amountMatch[1]) : 1,
+        usePathPayment: true,
+      };
+      if (slippageMatch) {
+        payload.slippage = parseFloat(slippageMatch[1]);
+      }
+      return { workflow: [{ action: "swap_tool", payload }] };
+    }
+  }
+
   const hasKeyword = SOROBAN_KEYWORDS.some((k) => text.includes(k));
   const contractIdMatch = input.match(/\bC[A-Z0-9]{10,}\b/);
 

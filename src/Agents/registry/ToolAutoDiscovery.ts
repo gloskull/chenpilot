@@ -39,6 +39,12 @@ export class ToolAutoDiscovery {
       toolRegistry.register(sorobanContractStateTool);
       const { riskAnalysisTool } = await import("../tools/riskAnalysis");
       toolRegistry.register(riskAnalysisTool);
+
+      const { PriceTool } = await import("../tools/price");
+      toolRegistry.register(new PriceTool());
+
+      const { liquidityPoolStatsTool } = await import("../tools/liquidityPoolStats");
+      toolRegistry.register(liquidityPoolStatsTool);
       // todo
       // await this.discoverToolsFromDirectory();
 
