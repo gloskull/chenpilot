@@ -285,3 +285,167 @@ export function parseEvent(
     createdAt,
   };
 }
+
+// ─── CoreVault contract event types ─────────────────────────────────────────
+//
+// Canonical event shape emitted by core_vault:
+//   topics[0] = symbol  ("init" | "upg_prop" | "upg_cncl" | "upg_done" | "adm_xfer")
+//   topics[1] = contract_id  (Address, always present)
+//   data      = named struct (see contract EvtXxx types)
+//
+// Replaying these events in ledger order fully reconstructs contract state.
+
+export type VaultEventTopic =
+  | "init"
+  | "upg_prop"
+  | "upg_cncl"
+  | "upg_done"
+  | "adm_xfer";
+
+export interface VaultEventInit {
+  topic: "init";
+  contractId: string;
+  admin: string;
+  ledger: number;
+  txHash: string;
+}
+
+export interface VaultEventUpgradeProposed {
+  topic: "upg_prop";
+  contractId: string;
+  admin: string;
+  newWasmHash: string;
+  unlockLedger: number;
+  ledger: number;
+  txHash: string;
+}
+
+export interface VaultEventUpgradeCancelled {
+  topic: "upg_cncl";
+  contractId: string;
+  admin: string;
+  ledger: number;
+  txHash: string;
+}
+
+export interface VaultEventUpgradeApplied {
+  topic: "upg_done";
+  contractId: string;
+  newWasmHash: string;
+  ledger: number;
+  txHash: string;
+}
+
+export interface VaultEventAdminTransferred {
+  topic: "adm_xfer";
+  contractId: string;
+  oldAdmin: string;
+  newAdmin: string;
+  ledger: number;
+  txHash: string;
+}
+
+export type VaultEvent =
+  | VaultEventInit
+  | VaultEventUpgradeProposed
+  | VaultEventUpgradeCancelled
+  | VaultEventUpgradeApplied
+  | VaultEventAdminTransferred;
+
+// ─── Typed data shapes decoded from XDR ─────────────────────────────────────
+
+interface EvtInitData { admin: string }
+interface EvtUpgPropData { admin: string; new_wasm_hash: string; unlock_ledger: number }
+interface EvtUpgCnclData { admin: string }
+interface EvtUpgDoneData { new_wasm_hash: string }
+interface EvtAdmXferData { old_admin: string; new_admin: string }
+
+function str(v: unknown): string { return typeof v === "string" ? v : String(v ?? ""); }
+function num(v: unknown): number { return typeof v === "number" ? v : Number(v ?? 0); }
+
+/**
+ * Parse a raw SorobanEvent from core_vault into a typed VaultEvent.
+ * topics[0] = symbol, topics[1] = contract_id, data = named struct.
+ * Returns null for unrecognised topics.
+ */
+export function parseVaultEvent(event: SorobanEvent): VaultEvent | null {
+  const topic = event.topics[0] as VaultEventTopic | undefined;
+  const contractId = str(event.topics[1]);
+  const { ledger, transactionHash: txHash } = event;
+  const d = event.data as Record<string, unknown> | null;
+
+  switch (topic) {
+    case "init": {
+      const data = d as EvtInitData | null;
+      return { topic, contractId, admin: str(data?.admin), ledger, txHash };
+    }
+    case "upg_prop": {
+      const data = d as EvtUpgPropData | null;
+      return {
+        topic, contractId,
+        admin: str(data?.admin),
+        newWasmHash: str(data?.new_wasm_hash),
+        unlockLedger: num(data?.unlock_ledger),
+        ledger, txHash,
+      };
+    }
+    case "upg_cncl": {
+      const data = d as EvtUpgCnclData | null;
+      return { topic, contractId, admin: str(data?.admin), ledger, txHash };
+    }
+    case "upg_done": {
+      const data = d as EvtUpgDoneData | null;
+      return { topic, contractId, newWasmHash: str(data?.new_wasm_hash), ledger, txHash };
+    }
+    case "adm_xfer": {
+      const data = d as EvtAdmXferData | null;
+      return {
+        topic, contractId,
+        oldAdmin: str(data?.old_admin),
+        newAdmin: str(data?.new_admin),
+        ledger, txHash,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+// ─── State reconstruction ────────────────────────────────────────────────────
+
+export interface VaultState {
+  admin: string | null;
+  pendingUpgrade: { newWasmHash: string; unlockLedger: number } | null;
+  currentWasmHash: string | null;
+}
+
+/**
+ * Replay vault events (sorted ascending by ledger) to reconstruct contract state.
+ * No ledger queries needed — the event stream is the source of truth.
+ */
+export function reconstructVaultState(events: VaultEvent[]): VaultState {
+  const state: VaultState = { admin: null, pendingUpgrade: null, currentWasmHash: null };
+
+  for (const e of events) {
+    switch (e.topic) {
+      case "init":
+        state.admin = e.admin;
+        break;
+      case "upg_prop":
+        state.pendingUpgrade = { newWasmHash: e.newWasmHash, unlockLedger: e.unlockLedger };
+        break;
+      case "upg_cncl":
+        state.pendingUpgrade = null;
+        break;
+      case "upg_done":
+        state.currentWasmHash = e.newWasmHash;
+        state.pendingUpgrade = null;
+        break;
+      case "adm_xfer":
+        state.admin = e.newAdmin;
+        break;
+    }
+  }
+
+  return state;
+}
