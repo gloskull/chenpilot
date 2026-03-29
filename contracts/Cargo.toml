@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "core_vault",
+    "multi_hop_swap",
 ]
 resolver = "2"
 
