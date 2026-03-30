@@ -25,7 +25,8 @@ export class RealtimeClient {
   private socket: Socket | null = null;
   private config: ClientConfig;
   private isConnected = false;
-  private eventHandlers: Map<string, Set<Function>> = new Map();
+  private eventHandlers: Map<string, Set<(...args: unknown[]) => void>> =
+    new Map();
 
   constructor(config: ClientConfig) {
     this.config = {
@@ -159,7 +160,7 @@ export class RealtimeClient {
   /**
    * Register event listener
    */
-  public on(eventName: string, handler: Function): void {
+  public on(eventName: string, handler: (...args: unknown[]) => void): void {
     if (!this.eventHandlers.has(eventName)) {
       this.eventHandlers.set(eventName, new Set());
     }
@@ -169,7 +170,7 @@ export class RealtimeClient {
   /**
    * Unregister event listener
    */
-  public off(eventName: string, handler: Function): void {
+  public off(eventName: string, handler: (...args: unknown[]) => void): void {
     this.eventHandlers.get(eventName)?.delete(handler);
   }
 

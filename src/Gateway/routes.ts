@@ -3,10 +3,12 @@ import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import * as os from "os";
 import * as crypto from "crypto";
+import * as StellarSdk from "@stellar/stellar-sdk";
 import AppDataSource from "../config/Datasource";
 import { User } from "../Auth/user.entity";
 import { stellarWebhookService } from "./webhook.service";
 import { platformWebhookService } from "./platformWebhook.service";
+import { SponsorshipTransactionBuilder } from "../../packages/sdk/src/sponsorship";
 import {
   transactionHistoryService,
   type TransactionQueryParams,
@@ -26,6 +28,7 @@ import {
 } from "./middleware/rbac.middleware";
 import { auditLogService } from "../AuditLog/auditLog.service";
 import { AuditAction, AuditSeverity } from "../AuditLog/auditLog.entity";
+import { getSocketManager } from "./socketManager";
 
 const router = Router();
 
@@ -38,24 +41,34 @@ router.use(helmet());
  * Expects the signature in the `x-webhook-signature` header as `sha256=<hex>`.
  * Set WEBHOOK_SECRET in your environment to enable enforcement.
  */
-function verifyWebhookSignature(req: Request, res: Response, next: () => void): void {
+function verifyWebhookSignature(
+  req: Request,
+  res: Response,
+  next: () => void
+): void {
   const secret = process.env.WEBHOOK_SECRET;
   if (!secret) {
     // If no secret is configured, skip verification (dev/test environments).
     // In production, WEBHOOK_SECRET must be set.
-    logger.warn("WEBHOOK_SECRET not configured — skipping webhook signature verification");
+    logger.warn(
+      "WEBHOOK_SECRET not configured — skipping webhook signature verification"
+    );
     next();
     return;
   }
 
   const signature = req.headers["x-webhook-signature"] as string | undefined;
   if (!signature) {
-    res.status(401).json({ success: false, message: "Missing webhook signature" });
+    res
+      .status(401)
+      .json({ success: false, message: "Missing webhook signature" });
     return;
   }
 
   const rawBody = JSON.stringify(req.body);
-  const expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
 
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
@@ -65,7 +78,9 @@ function verifyWebhookSignature(req: Request, res: Response, next: () => void): 
     !crypto.timingSafeEqual(sigBuffer, expectedBuffer)
   ) {
     logger.warn("Webhook signature mismatch", { receivedSignature: signature });
-    res.status(401).json({ success: false, message: "Invalid webhook signature" });
+    res
+      .status(401)
+      .json({ success: false, message: "Invalid webhook signature" });
     return;
   }
 
@@ -103,109 +118,121 @@ router.use("/audit", auditLogRoutes);
 router.use("/admin/agents", adminAgentRoutes);
 
 // Public webhook endpoint for Stellar funding notifications
-router.post("/webhook/stellar/funding", verifyWebhookSignature, async (req: Request, res: Response) => {
-  try {
-    const result = await stellarWebhookService.processFundingWebhook(req);
+router.post(
+  "/webhook/stellar/funding",
+  verifyWebhookSignature,
+  async (req: Request, res: Response) => {
+    try {
+      const result = await stellarWebhookService.processFundingWebhook(req);
 
-    if (result.success) {
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-        userId: result.userId,
-        deploymentTriggered: result.deploymentTriggered,
-      });
-    } else {
-      return res.status(400).json({
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: result.message,
+          userId: result.userId,
+          deploymentTriggered: result.deploymentTriggered,
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+        });
+      }
+    } catch (error) {
+      console.error("Webhook processing error:", error);
+      return res.status(500).json({
         success: false,
-        message: result.message,
+        message: "Internal server error",
       });
     }
-  } catch (error) {
-    console.error("Webhook processing error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
   }
-});
+);
 
 // Public webhook endpoint for Telegram
-router.post("/webhook/telegram", verifyWebhookSignature, async (req: Request, res: Response) => {
-  try {
-    const result = await platformWebhookService.processTelegramWebhook(req);
+router.post(
+  "/webhook/telegram",
+  verifyWebhookSignature,
+  async (req: Request, res: Response) => {
+    try {
+      const result = await platformWebhookService.processTelegramWebhook(req);
 
-    if (result.isDuplicate) {
-      // Return 200 for duplicates to acknowledge receipt
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-      });
-    }
+      if (result.isDuplicate) {
+        // Return 200 for duplicates to acknowledge receipt
+        return res.status(200).json({
+          success: true,
+          message: result.message,
+        });
+      }
 
-    if (result.success) {
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-        data: result.data,
-      });
-    } else {
-      return res.status(400).json({
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: result.message,
+          data: result.data,
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+        });
+      }
+    } catch (error) {
+      console.error("Telegram webhook processing error:", error);
+      return res.status(500).json({
         success: false,
-        message: result.message,
+        message: "Internal server error",
       });
     }
-  } catch (error) {
-    console.error("Telegram webhook processing error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
   }
-});
+);
 
 // Public webhook endpoint for Discord
-router.post("/webhook/discord", verifyWebhookSignature, async (req: Request, res: Response) => {
-  try {
-    const result = await platformWebhookService.processDiscordWebhook(req);
+router.post(
+  "/webhook/discord",
+  verifyWebhookSignature,
+  async (req: Request, res: Response) => {
+    try {
+      const result = await platformWebhookService.processDiscordWebhook(req);
 
-    // Discord ping response (type 1)
-    if (
-      result.data &&
-      typeof result.data === "object" &&
-      "type" in result.data &&
-      result.data.type === 1
-    ) {
-      return res.status(200).json({ type: 1 });
-    }
+      // Discord ping response (type 1)
+      if (
+        result.data &&
+        typeof result.data === "object" &&
+        "type" in result.data &&
+        result.data.type === 1
+      ) {
+        return res.status(200).json({ type: 1 });
+      }
 
-    if (result.isDuplicate) {
-      // Return 200 for duplicates to acknowledge receipt
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-      });
-    }
+      if (result.isDuplicate) {
+        // Return 200 for duplicates to acknowledge receipt
+        return res.status(200).json({
+          success: true,
+          message: result.message,
+        });
+      }
 
-    if (result.success) {
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-        data: result.data,
-      });
-    } else {
-      return res.status(400).json({
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: result.message,
+          data: result.data,
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+        });
+      }
+    } catch (error) {
+      console.error("Discord webhook processing error:", error);
+      return res.status(500).json({
         success: false,
-        message: result.message,
+        message: "Internal server error",
       });
     }
-  } catch (error) {
-    console.error("Discord webhook processing error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
   }
-});
+);
 
 /**
  * @swagger
@@ -608,11 +635,17 @@ router.get("/realtime/stats", (req: Request, res: Response) => {
       totalConnected: socketManager.getConnectedClientsCount(),
       connectedClients: socketManager
         .getAllConnectedClients()
-        .map((client: SocketClient) => ({
-          socketId: client.socketId,
-          userId: client.userId || "anonymous",
-          connectedAt: client.connectedAt,
-        })),
+        .map(
+          (client: {
+            socketId: string;
+            userId?: string;
+            connectedAt: Date;
+          }) => ({
+            socketId: client.socketId,
+            userId: client.userId || "anonymous",
+            connectedAt: client.connectedAt,
+          })
+        ),
     };
 
     res.json(stats);
@@ -660,10 +693,12 @@ router.get("/realtime/user/:userId/clients", (req: Request, res: Response) => {
     res.json({
       success: true,
       userId,
-      connectedClients: clients.map((client: SocketClient) => ({
-        socketId: client.socketId,
-        connectedAt: client.connectedAt,
-      })),
+      connectedClients: clients.map(
+        (client: { socketId: string; connectedAt: Date }) => ({
+          socketId: client.socketId,
+          connectedAt: client.connectedAt,
+        })
+      ),
       count: clients.length,
     });
   } catch (error) {
@@ -674,5 +709,109 @@ router.get("/realtime/user/:userId/clients", (req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * POST /api/account/:userId/sponsor
+ * Request sponsorship of the user's initial Stellar account reserves.
+ * Requires SPONSOR_SECRET_KEY and STELLAR_NETWORK env vars.
+ */
+router.post(
+  "/account/:userId/sponsor",
+  authenticateToken,
+  requireOwnerOrElevated("userId"),
+  async (req: Request, res: Response) => {
+    try {
+      const { userId } = req.params;
+      const userRepository = AppDataSource.getRepository(User);
+
+      const user = await userRepository.findOne({ where: { id: userId } });
+      if (!user) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+
+      if (user.isFunded) {
+        return res
+          .status(409)
+          .json({ success: false, message: "Account already sponsored" });
+      }
+
+      const sponsorSecret = process.env.SPONSOR_SECRET_KEY;
+      if (!sponsorSecret) {
+        return res
+          .status(503)
+          .json({
+            success: false,
+            message: "Sponsorship service not configured",
+          });
+      }
+
+      const networkPassphrase =
+        process.env.STELLAR_NETWORK === "mainnet"
+          ? StellarSdk.Networks.PUBLIC
+          : StellarSdk.Networks.TESTNET;
+
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const server = new StellarSdk.Horizon.Server(
+        process.env.HORIZON_URL || "https://horizon-testnet.stellar.org"
+      );
+
+      await server.loadAccount(sponsorKeypair.publicKey());
+
+      const builder = new SponsorshipTransactionBuilder(
+        sponsorKeypair,
+        networkPassphrase
+      );
+      builder.addBeginSponsorship({
+        sponsor: sponsorKeypair.publicKey(),
+        sponsoredAccount: user.address,
+      });
+      // Create the sponsored account entry
+      builder.addSponsoredOperation(
+        StellarSdk.Operation.createAccount({
+          source: sponsorKeypair.publicKey(),
+          destination: user.address,
+          startingBalance: "0",
+        })
+      );
+      builder.addEndSponsorship();
+
+      const tx = builder.build();
+      tx.sign(sponsorKeypair);
+
+      await server.submitTransaction(tx);
+
+      user.isFunded = true;
+      user.updatedAt = new Date();
+      await userRepository.save(user);
+
+      await auditLogService.log({
+        userId,
+        action: AuditAction.USER_CREATED, // closest available action
+        severity: AuditSeverity.INFO,
+        ipAddress:
+          (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+          req.socket.remoteAddress ||
+          "unknown",
+        userAgent: req.headers["user-agent"],
+        metadata: { event: "account_sponsored", address: user.address },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Account sponsored successfully",
+        address: user.address,
+      });
+    } catch (error) {
+      logger.error("Sponsorship error", { error, userId: req.params.userId });
+      return res.status(500).json({
+        success: false,
+        message:
+          error instanceof Error ? error.message : "Internal server error",
+      });
+    }
+  }
+);
 
 export default router;

@@ -63,6 +63,7 @@ describe("StellarMetadataManager", () => {
     });
 
     // Get the mocked server instance
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const StellarSDK = require("stellar-sdk");
     mockServer = StellarSDK.Server.mock.results[0].value;
   });
@@ -364,8 +365,12 @@ describe("StellarMetadataManager", () => {
         timestamp: Math.floor(Date.now() / 1000),
       };
 
-      const encoded1 = Buffer.from(JSON.stringify(metadata1)).toString("base64");
-      const encoded2 = Buffer.from(JSON.stringify(metadata2)).toString("base64");
+      const encoded1 = Buffer.from(JSON.stringify(metadata1)).toString(
+        "base64"
+      );
+      const encoded2 = Buffer.from(JSON.stringify(metadata2)).toString(
+        "base64"
+      );
 
       mockServer.accounts.mockReturnValue({
         accountId: jest.fn(() => ({
@@ -397,7 +402,9 @@ describe("StellarMetadataManager", () => {
         expiresAt: Math.floor(Date.now() / 1000) - 1000,
       };
 
-      const encoded1 = Buffer.from(JSON.stringify(unexpired)).toString("base64");
+      const encoded1 = Buffer.from(JSON.stringify(unexpired)).toString(
+        "base64"
+      );
       const encoded2 = Buffer.from(JSON.stringify(expired)).toString("base64");
 
       mockServer.accounts.mockReturnValue({
@@ -439,9 +446,9 @@ describe("StellarMetadataManager", () => {
     });
 
     it("should throw on missing key", async () => {
-      await expect(manager.prepareDeleteMetadata(accountId, "")).rejects.toThrow(
-        /accountId and key are required/
-      );
+      await expect(
+        manager.prepareDeleteMetadata(accountId, "")
+      ).rejects.toThrow(/accountId and key are required/);
     });
 
     it("should prepare delete transaction", async () => {
@@ -506,8 +513,12 @@ describe("StellarMetadataManager", () => {
         timestamp: Math.floor(Date.now() / 1000),
       };
 
-      const encoded1 = Buffer.from(JSON.stringify(metadata1)).toString("base64");
-      const encoded2 = Buffer.from(JSON.stringify(metadata2)).toString("base64");
+      const encoded1 = Buffer.from(JSON.stringify(metadata1)).toString(
+        "base64"
+      );
+      const encoded2 = Buffer.from(JSON.stringify(metadata2)).toString(
+        "base64"
+      );
 
       mockServer.accounts.mockReturnValue({
         accountId: jest.fn(() => ({
@@ -522,7 +533,10 @@ describe("StellarMetadataManager", () => {
         })),
       });
 
-      const results = await manager.getMetadataBatch(accountId, ["key1", "key2"]);
+      const results = await manager.getMetadataBatch(accountId, [
+        "key1",
+        "key2",
+      ]);
       expect(results.size).toBe(2);
       expect(results.get("key1")).toBeDefined();
       expect(results.get("key2")).toBeDefined();
@@ -605,7 +619,9 @@ describe("StellarMetadataManager", () => {
       mockServer.accounts.mockReturnValue({
         accountId: jest.fn(() => ({
           call: jest.fn().mockResolvedValue({
-            data_attr: { "md:test-key": Buffer.from("invalid-json").toString("base64") },
+            data_attr: {
+              "md:test-key": Buffer.from("invalid-json").toString("base64"),
+            },
           }),
         })),
       });
